@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ngapori Ranch — Field Data Entry Console</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#161c24; --panel2:#1b232e; --ink:#e6edf3; --muted:#8b98a5;
+    --line:#283340; --accent:#4f8cff; --green:#3fb950; --bright-green:#56d364;
+    --yellow:#e3b341; --orange:#f0883e; --blue:#58a6ff; --purple:#bc8cff; --red:#f85149;
+    --gray:#6e7681; --brown:#b08370;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.45}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px}
+  header.top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 18px;background:linear-gradient(135deg,#1a2230,#11171f);border:1px solid var(--line);border-radius:12px;margin-bottom:16px}
+  header.top h1{font-size:18px}
+  header.top h1 small{display:block;color:var(--muted);font-weight:400;font-size:12px;margin-top:2px}
+  .btn{background:var(--accent);color:#fff;border:0;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn:hover{filter:brightness(1.1)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  .btn.green{background:var(--green)} .btn.red{background:var(--red)}
+  .grid{display:grid;grid-template-columns:360px 1fr;gap:14px;align-items:start}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  label{display:block;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px}
+  input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{resize:vertical;min-height:54px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .podinfo{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:12px;font-size:12.5px}
+  .podinfo .pi{display:flex;justify-content:space-between;padding:3px 0}
+  .podinfo .pi span:first-child{color:var(--muted)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+  .actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:var(--panel)}
+  tr:hover td{background:var(--panel2)}
+  .log-actions a{margin-right:8px;cursor:pointer;font-size:11px}
+  .empty{color:var(--muted);text-align:center;padding:24px;font-style:italic}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--green);color:#0b0f14;padding:10px 16px;border-radius:8px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:60}
+  .toast.show{opacity:1}
+  .tabs{display:flex;gap:6px;margin-bottom:10px}
+  .tab{padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12.5px;color:var(--muted);border:1px solid transparent}
+  .tab.active{background:var(--panel2);color:var(--ink);border-color:var(--line)}
+  .hint{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.5}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:11px;color:var(--bright-green)}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}.row2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>📋 Ngapori Ranch — Field Data Entry Console
+      <small>Log measurements, overrides & events · exports to Excel / Google Sheets</small>
+    </h1>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn ghost" onclick="exportCSV()">⬇ Export CSV</button>
+      <button class="btn ghost" onclick="exportJSON()">⬇ Export JSON</button>
+      <button class="btn" onclick="downloadSelf()">⬇ Download this form</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- ENTRY FORM -->
+    <section class="panel">
+      <h2>➕ New Field Entry</h2>
+      <div class="tabs">
+        <div class="tab active" data-tab="measure" onclick="setTab('measure')">Measure</div>
+        <div class="tab" data-tab="move" onclick="setTab('move')">Move / Graze</div>
+        <div class="tab" data-tab="poultry" onclick="setTab('poultry')">Poultry</div>
+        <div class="tab" data-tab="override" onclick="setTab('override')">Override</div>
+      </div>
+
+      <label>Pod #</label>
+      <select id="pod" onchange="updatePodInfo()"></select>
+      <div class="podinfo" id="podInfo"></div>
+
+      <div id="formArea"></div>
+
+      <div class="actions">
+        <button class="btn green" onclick="saveEntry()">💾 Save Entry</button>
+        <button class="btn ghost" onclick="resetForm()">Clear</button>
+      </div>
+      <div class="hint">Entries are stored in this browser (localStorage) and grouped by date. Use <b>Export CSV</b> to paste into the Pod Master helper columns (Y/Z) of the workbook.</div>
+    </section>
+
+    <!-- LOG -->
+    <section class="panel">
+      <h2>📒 Entry Log <span style="margin-left:auto;color:var(--muted);font-weight:400;text-transform:none" id="logCount"></span></h2>
+      <div style="overflow:auto;max-height:560px">
+        <table><thead><tr><th>Date</th><th>Pod</th><th>Zone</th><th>Action</th><th>Height</th><th>Residual</th><th>DM</th><th>Override</th><th>Status</th><th>Notes</th><th></th></tr></thead>
+        <tbody id="logBody"></tbody></table>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn ghost" onclick="clearAll()">🗑 Clear all entries</button>
+      </div>
+    </section>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- Pod data (same source as dashboard) ---------- */
+const PODS=[
+ {pod:1,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
+ {pod:2,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
+ {pod:3,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
+ {pod:4,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
+ {pod:5,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
+ {pod:6,zone:'Goat Browsing',species:'Goats → Hens',acres:1,seedRate:36,entryHt:'10"–14"',exitRes:'4" residual',rest:25,poultry:2},
+ {pod:7,zone:'Goat Browsing',species:'Goats → Hens',acres:1,seedRate:36,entryHt:'10"–14"',exitRes:'4" residual',rest:25,poultry:2},
+ {pod:8,zone:'Goat Browsing',species:'Goats → Hens',acres:1,seedRate:36,entryHt:'10"–14"',exitRes:'4" residual',rest:25,poultry:2},
+ {pod:9,zone:'Goat Browsing',species:'Goats → Hens',acres:1,seedRate:36,entryHt:'10"–14"',exitRes:'4" residual',rest:25,poultry:2},
+ {pod:10,zone:'Goat Browsing',species:'Goats → Hens',acres:1,seedRate:36,entryHt:'10"–14"',exitRes:'4" residual',rest:25,poultry:2},
+ {pod:11,zone:'Drought',species:'Cattle → Lamb → Hens',acres:1,seedRate:37,entryHt:'12"–14"',exitRes:'6" residual',rest:30,poultry:2},
+ {pod:12,zone:'Drought',species:'Cattle → Lamb → Hens',acres:1,seedRate:37,entryHt:'12"–14"',exitRes:'6" residual',rest:30,poultry:2},
+ {pod:13,zone:'Drought',species:'Cattle → Lamb → Hens',acres:1,seedRate:37,entryHt:'12"–14"',exitRes:'6" residual',rest:30,poultry:2},
+ {pod:14,zone:'Drought',species:'Cattle → Lamb → Hens',acres:1,seedRate:37,entryHt:'12"–14"',exitRes:'6" residual',rest:30,poultry:2},
+ {pod:15,zone:'Stockpile',species:'Cattle → Lamb → Hens',acres:1,seedRate:39,entryHt:'12"+',exitRes:'6" residual',rest:60,poultry:2},
+ {pod:16,zone:'Stockpile',species:'Cattle → Lamb → Hens',acres:1,seedRate:39,entryHt:'12"+',exitRes:'6" residual',rest:60,poultry:2},
+ {pod:17,zone:'Stockpile',species:'Cattle → Lamb → Hens',acres:1,seedRate:39,entryHt:'12"+',exitRes:'6" residual',rest:60,poultry:2},
+ {pod:18,zone:'Sacrifice',species:'Heavy Traffic / Hay',acres:1,seedRate:36,entryHt:'Emergency',exitRes:'3"–4"',rest:90,poultry:0},
+ {pod:19,zone:'Sacrifice',species:'Heavy Traffic / Hay',acres:1,seedRate:36,entryHt:'Emergency',exitRes:'3"–4"',rest:90,poultry:0},
+ {pod:20,zone:'Sacrifice',species:'Heavy Traffic / Hay',acres:1,seedRate:36,entryHt:'Emergency',exitRes:'3"–4"',rest:90,poultry:0},
+];
+const STATUSES=['Ready to Plant','Planted','Growing','GrazeReady','Grazing','Poultry Cycling','Recovery','Rest Extended','Replant Needed'];
+const OVERRIDES=['(none)','Rest Extended','Replant Needed'];
+const todayStr=new Date().toISOString().slice(0,10);
+let currentTab='measure';
+
+/* ---------- Init pod selector ---------- */
+const sel=document.getElementById('pod');
+PODS.forEach(p=>{const o=document.createElement('option');o.value=p.pod;o.text=`Pod ${p.pod} — ${p.zone}`;sel.appendChild(o);});
+updatePodInfo();renderForm();renderLog();
+
+function updatePodInfo(){
+  const p=PODS.find(x=>x.pod==+sel.value);
+  document.getElementById('podInfo').innerHTML=`
+    <div class="pi"><span>Zone</span><b>${p.zone}</b></div>
+    <div class="pi"><span>Species sequence</span><b>${p.species}</b></div>
+    <div class="pi"><span>Entry height target</span><b>${p.entryHt}</b></div>
+    <div class="pi"><span>Exit residual target</span><b>${p.exitRes}</b></div>
+    <div class="pi"><span>Rest required</span><b>${p.rest} days</b></div>
+    <div class="pi"><span>Poultry window</span><b>${p.poultry>0?p.poultry+'d post-graze':'n/a'}</b></div>`;
+}
+
+/* ---------- Tabbed form ---------- */
+function setTab(t){currentTab=t;document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===t));renderForm();}
+function renderForm(){
+  const f=document.getElementById('formArea');
+  const dateField=`<label>Date / Time</label><input type="date" id="f_date" value="${todayStr}">`;
+  const notesField=`<label>Notes</label><textarea id="f_notes" placeholder="Field observations..."></textarea>`;
+  if(currentTab==='measure'){
+    f.innerHTML=dateField+`
+      <div class="row2">
+        <div><label>Pre-graze height (in)</label><input type="number" step="0.5" id="f_pre" placeholder="e.g. 11"></div>
+        <div><label>Post-graze residual (in)</label><input type="number" step="0.5" id="f_post" placeholder="e.g. 5"></div>
+      </div>
+      <div class="row2">
+        <div><label>Dry matter (lbs DM/ac)</label><input type="number" id="f_dm" placeholder="e.g. 2400"></div>
+        <div><label>Soil moisture index</label><input type="number" step="0.1" id="f_sm" placeholder="0–1.0"></div>
+      </div>
+      <div><label>Weed density %</label><input type="number" id="f_weed" placeholder="e.g. 8"></div>`+notesField;
+  } else if(currentTab==='move'){
+    f.innerHTML=dateField+`
+      <label>Livestock moved</label><select id="f_species">
+        <option>Lambs</option><option>Cattle</option><option>Goats</option><option>Hens</option></select>
+      <div class="row2">
+        <div><label>Move-in height (in)</label><input type="number" step="0.5" id="f_pre" placeholder="entry height"></div>
+        <div><label>Planned residual (in)</label><input type="number" step="0.5" id="f_post" placeholder="exit residual"></div>
+      </div>
+      <div class="row2">
+        <div><label>Graze days</label><input type="number" id="f_grazedays" placeholder="2"></div>
+        <div><label>Back-fence set?</label><select id="f_backfence"><option>Yes</option><option>No</option></select></div>
+      </div>
+      <label>Update status to</label><select id="f_status">${STATUSES.map(s=>`<option>${s}</option>`).join('')}</select>`+notesField;
+  } else if(currentTab==='poultry'){
+    f.innerHTML=dateField+`
+      <label>Poultry action</label><select id="f_paction"><option>Entry</option><option>Exit</option></select>
+      <div class="row2">
+        <div><label>Regrowth height (in)</label><input type="number" step="0.5" id="f_pre" placeholder="must be &lt; 2"></div>
+        <div><label>Exit by date</label><input type="date" id="f_exitby"></div>
+      </div>
+      <label>Update status to</label><select id="f_status"><option>Poultry Cycling</option><option>Recovery</option>${STATUSES.map(s=>`<option>${s}</option>`).join('')}</select>`+notesField;
+  } else { // override
+    f.innerHTML=dateField+`
+      <label>Manual override</label><select id="f_override">${OVERRIDES.map(o=>`<option>${o}</option>`).join('')}</select>
+      <label>Set status to</label><select id="f_status">${STATUSES.map(s=>`<option>${s}</option>`).join('')}</select>
+      <label>Reason</label><textarea id="f_notes" placeholder="e.g. slow regrowth — drought stress, bare ground observed"></textarea>`;
+  }
+}
+
+/* ---------- Save / log ---------- */
+function saveEntry(){
+  const pod=+sel.value; const p=PODS.find(x=>x.pod===pod);
+  const date=document.getElementById('f_date').value||todayStr;
+  const notes=(document.getElementById('f_notes')||{}).value||'';
+  const entry={id:Date.now(),date,pod,zone:p.zone,action:currentTab,notes,
+    pre:val('f_pre'),post:val('f_post'),dm:val('f_dm'),sm:val('f_sm'),weed:val('f_weed'),
+    species:val('f_species'),grazedays:val('f_grazedays'),backfence:val('f_backfence'),
+    paction:val('f_paction'),exitby:val('f_exitby'),
+    override:val('f_override'),status:val('f_status')};
+  const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
+  log.unshift(entry); localStorage.setItem('ngapori_log',JSON.stringify(log));
+  resetForm(); renderLog(); toast('Entry saved');
+}
+function val(id){const el=document.getElementById(id);return el?(el.value||''):'';}
+function resetForm(){renderForm();}
+function renderLog(){
+  const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
+  document.getElementById('logCount').textContent=log.length+' entries';
+  const body=document.getElementById('logBody');
+  if(!log.length){body.innerHTML='<tr><td colspan="11" class="empty">No entries yet — log your first field measurement above.</td></tr>';return;}
+  body.innerHTML=log.map(e=>`<tr>
+    <td>${e.date}</td><td><b>${e.pod}</b></td><td>${e.zone}</td>
+    <td>${actionLabel(e)}</td>
+    <td>${e.pre||'—'}</td><td>${e.post||'—'}</td><td>${e.dm||'—'}</td>
+    <td>${e.override&&e.override!=='(none)'?e.override:'—'}</td>
+    <td>${e.status||'—'}</td>
+    <td style="white-space:normal;max-width:200px;color:var(--muted)">${e.notes||'—'}</td>
+    <td class="log-actions"><a onclick="delEntry(${e.id})" style="color:var(--red)">✕ del</a></td></tr>`).join('');
+}
+function actionLabel(e){
+  const m={measure:'📏 Measure',move:'🐄 Move',poultry:'🐔 Poultry',override:'⚙ Override'};
+  if(e.action==='poultry'&&e.paction)return (e.paction==='Entry'?'🐔 In':'🐔 Out');
+  return m[e.action]||e.action;
+}
+function delEntry(id){let log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');log=log.filter(e=>e.id!==id);localStorage.setItem('ngapori_log',JSON.stringify(log));renderLog();}
+function clearAll(){if(confirm('Delete ALL entries? This cannot be undone.')){localStorage.removeItem('ngapori_log');renderLog();}}
+
+/* ---------- Export ---------- */
+function buildRows(){
+  const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
+  return log.map(e=>({
+    Date:e.date, Pod:e.pod, Zone:e.zone, Action:e.action,
+    'Pre-graze Height (in)':e.pre||'', 'Post-graze Residual (in)':e.post||'',
+    'Dry Matter (lbs/ac)':e.dm||'', 'Soil Moisture':e.sm||'', 'Weed Density %':e.weed||'',
+    'Species Moved':e.species||'', 'Graze Days':e.grazedays||'', 'Back-fence':e.backfence||'',
+    'Poultry Action':e.paction||'', 'Poultry Exit By':e.exitby||'',
+    'Manual Override':e.override||'', Status:e.status||'', Notes:e.notes||''
+  }));
+}
+function exportCSV(){
+  const rows=buildRows(); if(!rows.length){toast('Nothing to export');return;}
+  const keys=Object.keys(rows[0]);
+  const csv=keys.join(',')+'\n'+rows.map(r=>keys.map(k=>csvEsc(r[k])).join(',')).join('\n');
+  download('ngapori-field-log.csv',csv,'text/csv');
+}
+function csvEsc(v){v=String(v==null?'':v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
+function exportJSON(){
+  const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
+  download('ngapori-field-log.json',JSON.stringify(log,null,2),'application/json');
+}
+function download(name,content,type){
+  const blob=new Blob([content],{type});const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=name;a.click();
+}
+function downloadSelf(){
+  const html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+  download('ngapori-entry.html',html,'text/html');
+}
+function toast(msg){const t=document.getElementById('toast');t.textContent='✓ '+msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
+</script>
+</body>
+</html>
