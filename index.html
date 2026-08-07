@@ -373,8 +373,13 @@ async function pushToSheet(entry){
       headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight against Apps Script
       body:JSON.stringify(entry)
     });
-    const data=await res.json().catch(()=>({ok:true}));
-    if(data.ok===false) throw new Error(data.error||'Unknown error');
+    const text=await res.text();
+    let data;
+    try{ data=JSON.parse(text); }
+    catch(parseErr){
+      throw new Error('Non-JSON response from Apps Script (likely an authorization/deployment issue): '+text.slice(0,150));
+    }
+    if(!res.ok || data.ok===false) throw new Error(data.error||('HTTP '+res.status));
     toast('Synced to Google Sheet ✓');
   }catch(err){
     console.error('Push to sheet failed:',err);
