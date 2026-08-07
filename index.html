@@ -54,9 +54,11 @@
 <div class="wrap">
   <header class="top">
     <h1>📋 Ngapori Ranch — Field Data Entry Console
-      <small>Log measurements, overrides & events · exports to Excel / Google Sheets</small>
+      <small>Log measurements, overrides & events · live pod data from Google Sheets</small>
     </h1>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <span id="syncStatus" style="font-size:11.5px;color:var(--muted)">⏳ Connecting…</span>
+      <button class="btn ghost" onclick="loadLiveData(true)">🔄 Refresh</button>
       <button class="btn ghost" onclick="exportCSV()">⬇ Export CSV</button>
       <button class="btn ghost" onclick="exportJSON()">⬇ Export JSON</button>
       <button class="btn" onclick="downloadSelf()">⬇ Download this form</button>
@@ -84,7 +86,7 @@
         <button class="btn green" onclick="saveEntry()">💾 Save Entry</button>
         <button class="btn ghost" onclick="resetForm()">Clear</button>
       </div>
-      <div class="hint">Entries are stored in this browser (localStorage) and grouped by date. Use <b>Export CSV</b> to paste into the Pod Master helper columns (Y/Z) of the workbook.</div>
+      <div class="hint">Pod list, status, zone, targets and dates are pulled live from the <b>Pod Master</b> tab of the published workbook. Entries you save here are stored in this browser (localStorage) — the sheet is read-only from this form. Use <b>Export CSV</b> and paste into the Pod Master helper columns (Y/Z) to update the workbook.</div>
     </section>
 
     <!-- LOG -->
@@ -103,8 +105,137 @@
 <div class="toast" id="toast"></div>
 
 <script>
-/* ---------- Pod data (same source as dashboard) ---------- */
-const PODS=[
+/* ---------- Live Google Sheets sources (published CSV) ---------- */
+const CSV_URLS={
+  dashboard:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1724025015&single=true&output=csv',
+  podMaster:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1224025893&single=true&output=csv',
+  zoneConfig:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1616014200&single=true&output=csv',
+  seedMix:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1804500080&single=true&output=csv',
+  calendar:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1290068870&single=true&output=csv',
+  taskCards:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=858953869&single=true&output=csv',
+  rotationRules:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1341751329&single=true&output=csv'
+};
+
+/* ---------- CSV parsing helpers ---------- */
+function parseCSVText(text){
+  const rows=[];let row=[];let field='';let inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i++;} else inQuotes=false; }
+      else field+=c;
+    } else {
+      if(c==='"') inQuotes=true;
+      else if(c===','){row.push(field);field='';}
+      else if(c==='\r'){/* skip */}
+      else if(c==='\n'){row.push(field);rows.push(row);row=[];field='';}
+      else field+=c;
+    }
+  }
+  if(field.length||row.length){row.push(field);rows.push(row);}
+  return rows;
+}
+async function fetchCSV(url){
+  const sep=url.includes('?')?'&':'?';
+  const res=await fetch(url+sep+'_ts='+Date.now());
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return parseCSVText(await res.text());
+}
+function findHeaderRow(rows,firstCellMatch){
+  return rows.findIndex(r=>(r[0]||'').trim()===firstCellMatch);
+}
+function rowsToObjects(rows,headerIdx,stopFn){
+  const headers=rows[headerIdx].map(h=>h.trim());
+  const out=[];
+  for(let i=headerIdx+1;i<rows.length;i++){
+    const r=rows[i];
+    if(stopFn(r)) break;
+    const obj={};
+    headers.forEach((h,idx)=>obj[h]=(r[idx]||'').trim());
+    out.push(obj);
+  }
+  return out;
+}
+function fmtDate(s){
+  if(s==null) return '—';
+  s=String(s).trim();
+  if(!s) return '—';
+  return s.replace(/\s+00:00:00$/,'');
+}
+
+/* ---------- Parse Pod Master + ZoneConfig into app pod format ---------- */
+function parsePodMaster(rows){
+  const hIdx=findHeaderRow(rows,'Pod #');
+  if(hIdx===-1) throw new Error('Pod Master header row not found');
+  const raw=rowsToObjects(rows,hIdx,r=>!parseInt(r[0],10));
+  return raw.map(r=>({
+    pod:parseInt(r['Pod #'],10),
+    zone:r['Zone'],
+    species:r['Species Sequence'],
+    acres:parseFloat(r['Acres'])||1,
+    seedRate:parseFloat(r['Seed Rate\n(lb/acre)'])||0,
+    seedNeeded:parseFloat(r['Seed Needed\n(lbs)'])||0,
+    entryHt:r['Entry Height\nTarget'],
+    exitRes:r['Exit Residual\nTarget'],
+    plantDate:r['Plant Date'],
+    grazeReadyDate:r['GrazeReady\nDate'],
+    grazeDays:r['Graze\nDays'],
+    grazingStart:r['Grazing Start'],
+    grazingEnd:r['Grazing End'],
+    poultryStart:r['Poultry Start'],
+    poultryEnd:r['Poultry End'],
+    rest:parseFloat(r['Rest\nDays'])||0,
+    nextGrazeReady:r['Next GrazeReady\n(Recovery Complete)'],
+    override:r['Manual Override']||'',
+    status:r['STATUS']||'',
+    notes:r['Notes']||''
+  }));
+}
+function parseZoneConfig(rows){
+  const hIdx=findHeaderRow(rows,'Pod_Start');
+  if(hIdx===-1) return [];
+  return rowsToObjects(rows,hIdx,r=>!r[0]);
+}
+
+const STATUS_COLORS={
+  'Ready to Plant':'gray','Planted':'blue','Growing':'yellow','GrazeReady':'bright-green',
+  'Grazed':'orange','Poultry Cycling':'purple','Recovery':'accent',
+  'Rest Extended':'red','Replant Needed':'red'
+};
+
+let ZONES=[];
+let lastSync=null;
+
+function setSyncStatus(state){
+  const el=document.getElementById('syncStatus');
+  if(!el) return;
+  if(state==='syncing') el.innerHTML='⏳ Syncing with Google Sheets…';
+  else if(state==='ok') el.innerHTML='✅ Live · synced '+lastSync.toLocaleTimeString();
+  else el.innerHTML='⚠ Sync failed — showing cached pod data';
+}
+
+async function loadLiveData(showToast){
+  setSyncStatus('syncing');
+  try{
+    const [pmRows,zcRows]=await Promise.all([fetchCSV(CSV_URLS.podMaster),fetchCSV(CSV_URLS.zoneConfig)]);
+    const pods=parsePodMaster(pmRows);
+    if(!pods.length) throw new Error('No pod rows parsed from Pod Master tab');
+    PODS=pods;
+    ZONES=parseZoneConfig(zcRows);
+    lastSync=new Date();
+    setSyncStatus('ok');
+    rebuildPodSelect();
+    updatePodInfo();
+    if(showToast) toast('Synced with Google Sheets');
+  }catch(err){
+    console.error('Live sync failed:',err);
+    setSyncStatus('error');
+    if(showToast) toast('Sync failed — check connection');
+  }
+}
+
+/* ---------- Fallback pod data (used until live sync completes, or if it fails) ---------- */
+let PODS=[
  {pod:1,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
  {pod:2,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
  {pod:3,zone:'Finishing',species:'Lamb → Cattle → Hens',acres:1,seedRate:34,entryHt:'10"–12"',exitRes:'4"–6" min',rest:25,poultry:2},
@@ -126,25 +257,43 @@ const PODS=[
  {pod:19,zone:'Sacrifice',species:'Heavy Traffic / Hay',acres:1,seedRate:36,entryHt:'Emergency',exitRes:'3"–4"',rest:90,poultry:0},
  {pod:20,zone:'Sacrifice',species:'Heavy Traffic / Hay',acres:1,seedRate:36,entryHt:'Emergency',exitRes:'3"–4"',rest:90,poultry:0},
 ];
-const STATUSES=['Ready to Plant','Planted','Growing','GrazeReady','Grazing','Poultry Cycling','Recovery','Rest Extended','Replant Needed'];
+const STATUSES=['Ready to Plant','Planted','Growing','GrazeReady','Grazed','Poultry Cycling','Recovery','Rest Extended','Replant Needed'];
 const OVERRIDES=['(none)','Rest Extended','Replant Needed'];
 const todayStr=new Date().toISOString().slice(0,10);
 let currentTab='measure';
 
 /* ---------- Init pod selector ---------- */
 const sel=document.getElementById('pod');
-PODS.forEach(p=>{const o=document.createElement('option');o.value=p.pod;o.text=`Pod ${p.pod} — ${p.zone}`;sel.appendChild(o);});
+function rebuildPodSelect(){
+  const prev=sel.value;
+  sel.innerHTML='';
+  PODS.forEach(p=>{const o=document.createElement('option');o.value=p.pod;o.text=`Pod ${p.pod} — ${p.zone}`;sel.appendChild(o);});
+  if(PODS.some(p=>String(p.pod)===prev)) sel.value=prev;
+}
+rebuildPodSelect();
 updatePodInfo();renderForm();renderLog();
+loadLiveData(false);
 
 function updatePodInfo(){
   const p=PODS.find(x=>x.pod==+sel.value);
-  document.getElementById('podInfo').innerHTML=`
+  const info=document.getElementById('podInfo');
+  if(!p){info.innerHTML='<div class="empty">No pod data</div>';return;}
+  const color=STATUS_COLORS[p.status]||'gray';
+  const hasOverride=p.override && p.override.trim() && p.override.trim()!=='(none)';
+  info.innerHTML=`
+    <div class="pi"><span>Status</span><span class="badge" style="background:var(--${color});color:#0b0f14">${p.status||'—'}</span></div>
     <div class="pi"><span>Zone</span><b>${p.zone}</b></div>
     <div class="pi"><span>Species sequence</span><b>${p.species}</b></div>
     <div class="pi"><span>Entry height target</span><b>${p.entryHt}</b></div>
     <div class="pi"><span>Exit residual target</span><b>${p.exitRes}</b></div>
+    <div class="pi"><span>Plant date</span><b>${fmtDate(p.plantDate)}</b></div>
+    <div class="pi"><span>GrazeReady date</span><b>${fmtDate(p.grazeReadyDate)}</b></div>
+    <div class="pi"><span>Grazing window</span><b>${fmtDate(p.grazingStart)} → ${fmtDate(p.grazingEnd)}</b></div>
+    <div class="pi"><span>Poultry window</span><b>${fmtDate(p.poultryStart)} → ${fmtDate(p.poultryEnd)}</b></div>
     <div class="pi"><span>Rest required</span><b>${p.rest} days</b></div>
-    <div class="pi"><span>Poultry window</span><b>${p.poultry>0?p.poultry+'d post-graze':'n/a'}</b></div>`;
+    <div class="pi"><span>Next GrazeReady</span><b>${fmtDate(p.nextGrazeReady)}</b></div>
+    ${hasOverride?`<div class="pi"><span>Manual override</span><b style="color:var(--red)">${p.override}</b></div>`:''}
+    ${p.notes?`<div class="pi" style="display:block;padding-top:6px"><span>Notes</span><div style="margin-top:2px;color:var(--ink)">${p.notes}</div></div>`:''}`;
 }
 
 /* ---------- Tabbed form ---------- */
