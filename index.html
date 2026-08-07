@@ -379,6 +379,7 @@ async function pushToSheet(entry){
     catch(parseErr){
       throw new Error('Non-JSON response from Apps Script (likely an authorization/deployment issue): '+text.slice(0,150));
     }
+    console.log('Apps Script response:',data); // open DevTools console (F12) to inspect debug.headerRow / debug.error
     if(!res.ok || data.ok===false) throw new Error(data.error||('HTTP '+res.status));
     toast('Synced to Google Sheet ✓');
   }catch(err){
