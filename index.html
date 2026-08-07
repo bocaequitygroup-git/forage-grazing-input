@@ -86,7 +86,7 @@
         <button class="btn green" onclick="saveEntry()">💾 Save Entry</button>
         <button class="btn ghost" onclick="resetForm()">Clear</button>
       </div>
-      <div class="hint">Pod list, status, zone, targets and dates are pulled live from the <b>Pod Master</b> tab of the published workbook. Entries you save here are stored in this browser (localStorage) — the sheet is read-only from this form. Use <b>Export CSV</b> and paste into the Pod Master helper columns (Y/Z) to update the workbook.</div>
+      <div class="hint">Pod list, status, zone, targets and dates are pulled live from the <b>Pod Master</b> tab. Saved entries are stored locally and, once the Apps Script backend is deployed, also written to a <b>Field Log</b> tab in the workbook (and reflected in Pod Master's Last Measured / Manual Override / Notes columns).</div>
     </section>
 
     <!-- LOG -->
@@ -105,6 +105,11 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ---------- Apps Script Web App endpoint (writes entries into the Sheet) ---------- */
+/* Deploy Code.gs as a Web App (Execute as: Me, Access: Anyone), then paste the
+   /exec URL below. Until this is set, entries save locally + export only. */
+const APPS_SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_EXEC_URL_HERE';
+
 /* ---------- Live Google Sheets sources (published CSV) ---------- */
 const CSV_URLS={
   dashboard:'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGqbocCIRer9iDmj3e__tcat4cwRbvVIiuJ4hn0Yasxjng5T7X9WOviHe3V3vj78c5q7SiVsHBMYXY/pub?gid=1724025015&single=true&output=csv',
@@ -343,7 +348,7 @@ function renderForm(){
 }
 
 /* ---------- Save / log ---------- */
-function saveEntry(){
+async function saveEntry(){
   const pod=+sel.value; const p=PODS.find(x=>x.pod===pod);
   const date=document.getElementById('f_date').value||todayStr;
   const notes=(document.getElementById('f_notes')||{}).value||'';
@@ -354,7 +359,27 @@ function saveEntry(){
     override:val('f_override'),status:val('f_status')};
   const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
   log.unshift(entry); localStorage.setItem('ngapori_log',JSON.stringify(log));
-  resetForm(); renderLog(); toast('Entry saved');
+  resetForm(); renderLog();
+  toast('Entry saved');
+  pushToSheet(entry);
+}
+async function pushToSheet(entry){
+  if(!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_YOUR')){
+    return; // backend not configured yet — local save only
+  }
+  try{
+    const res=await fetch(APPS_SCRIPT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight against Apps Script
+      body:JSON.stringify(entry)
+    });
+    const data=await res.json().catch(()=>({ok:true}));
+    if(data.ok===false) throw new Error(data.error||'Unknown error');
+    toast('Synced to Google Sheet ✓');
+  }catch(err){
+    console.error('Push to sheet failed:',err);
+    toast('Saved locally — sheet sync failed');
+  }
 }
 function val(id){const el=document.getElementById(id);return el?(el.value||''):'';}
 function resetForm(){renderForm();}
