@@ -48,9 +48,31 @@
   .hint{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.5}
   code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:11px;color:var(--bright-green)}
   @media(max-width:900px){.grid{grid-template-columns:1fr}.row2{grid-template-columns:1fr}}
+  /* ---------- Auth ---------- */
+  .login-overlay{position:fixed;inset:0;background:rgba(6,9,13,.88);display:flex;align-items:center;justify-content:center;z-index:100}
+  .login-overlay.hide{display:none}
+  .login-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;width:320px;max-width:90vw}
+  .login-box h2{font-size:16px;margin-bottom:4px}
+  .login-box p{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .login-err{color:var(--red);font-size:12px;min-height:16px;margin-top:8px}
+  .userbadge{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+  .userbadge b{color:var(--ink)}
+  .role-pill{padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--panel2);border:1px solid var(--line);color:var(--ink)}
 </style>
 </head>
 <body>
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>🔒 Sign in</h2>
+    <p>Enter your name and PIN to log field entries. Ask a manager if you don't have one.</p>
+    <label>Name</label>
+    <input type="text" id="login_name" autocomplete="username" placeholder="e.g. Alex">
+    <label>PIN</label>
+    <input type="password" inputmode="numeric" id="login_pin" autocomplete="current-password" placeholder="••••" onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="login-err" id="loginErr"></div>
+    <button class="btn green" style="width:100%;margin-top:12px" onclick="doLogin()">Sign In</button>
+  </div>
+</div>
 <div class="wrap">
   <header class="top">
     <h1>📋 Ngapori Ranch — Field Data Entry Console
@@ -62,6 +84,11 @@
       <button class="btn ghost" onclick="exportCSV()">⬇ Export CSV</button>
       <button class="btn ghost" onclick="exportJSON()">⬇ Export JSON</button>
       <button class="btn" onclick="downloadSelf()">⬇ Download this form</button>
+      <div class="userbadge" id="userBadge" style="display:none">
+        <span>👤 <b id="ub_name"></b></span>
+        <span class="role-pill" id="ub_role"></span>
+        <button class="btn ghost" onclick="doLogout()" style="padding:4px 10px;font-size:11px">Sign out</button>
+      </div>
     </div>
   </header>
 
@@ -93,7 +120,7 @@
     <section class="panel">
       <h2>📒 Entry Log <span style="margin-left:auto;color:var(--muted);font-weight:400;text-transform:none" id="logCount"></span></h2>
       <div style="overflow:auto;max-height:560px">
-        <table><thead><tr><th>Date</th><th>Pod</th><th>Zone</th><th>Action</th><th>Height</th><th>Residual</th><th>DM</th><th>Override</th><th>Status</th><th>Notes</th><th></th></tr></thead>
+        <table><thead><tr><th>Date</th><th>Pod</th><th>Zone</th><th>Action</th><th>Height</th><th>Residual</th><th>DM</th><th>Override</th><th>Status</th><th>By</th><th>Notes</th><th></th></tr></thead>
         <tbody id="logBody"></tbody></table>
       </div>
       <div class="actions" style="margin-top:12px">
@@ -110,10 +137,69 @@
    /exec URL below. Until this is set, entries save locally + export only. */
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbys4wUWncukgW93QdkE2f08ocbOpdqQpxW7q3N51PvQivFkOOuliAAULtyiRwLcDNZfow/exec';
 
-/* Optional shared-secret token. Leave blank unless you've also set SHARED_TOKEN
-   in Code.gs to a matching non-empty value — otherwise every request will be
-   rejected as unauthorized. */
-const APPS_SCRIPT_TOKEN = '';
+/* ---------- Auth ----------
+   Real access control lives server-side in Code.gs: it checks name+PIN against
+   a private Users tab and, on success, issues a signed session token (HMAC,
+   secret never leaves the script). This page just stores that token and sends
+   it with every write — the server re-verifies it and reads the role from the
+   token itself, not from anything this page claims. */
+const SESSION_KEY = 'ngapori_session';
+function getSession(){
+  try{
+    const raw = localStorage.getItem(SESSION_KEY);
+    if(!raw) return null;
+    const s = JSON.parse(raw);
+    if(!s.token || !s.exp || Date.now() > s.exp){ localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  }catch(e){ return null; }
+}
+function setSession(s){ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function clearSession(){ localStorage.removeItem(SESSION_KEY); }
+function requireLogin(){
+  const s = getSession();
+  const overlay=document.getElementById('loginOverlay'), badge=document.getElementById('userBadge');
+  if(s){
+    overlay.classList.add('hide'); badge.style.display='flex';
+    document.getElementById('ub_name').textContent=s.name;
+    document.getElementById('ub_role').textContent=s.role;
+    applyRoleGating(s.role);
+  } else {
+    overlay.classList.remove('hide'); badge.style.display='none';
+  }
+  return s;
+}
+function applyRoleGating(role){
+  const canOverride = role==='Manager' || role==='Founder';
+  const overrideTab = document.querySelector('.tab[data-tab="override"]');
+  if(overrideTab) overrideTab.style.display = canOverride ? '' : 'none';
+  if(!canOverride && currentTab==='override') setTab('measure');
+}
+async function doLogin(){
+  const name=document.getElementById('login_name').value.trim();
+  const pin=document.getElementById('login_pin').value.trim();
+  const errEl=document.getElementById('loginErr');
+  errEl.textContent='';
+  if(!name||!pin){ errEl.textContent='Enter both name and PIN.'; return; }
+  if(!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_YOUR')){
+    errEl.textContent='Backend not configured — ask an admin to set APPS_SCRIPT_URL.'; return;
+  }
+  try{
+    const res=await fetch(APPS_SCRIPT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({login:true,name,pin})
+    });
+    const data=await res.json();
+    if(!data.ok){ errEl.textContent=data.error||'Sign-in failed.'; return; }
+    setSession({name:data.name, role:data.role, token:data.token, exp:Date.now()+(data.expiresInHours||12)*3600*1000});
+    document.getElementById('login_pin').value='';
+    requireLogin();
+    toast('Signed in as '+data.name);
+  }catch(err){
+    errEl.textContent='Could not reach the server — check your connection.';
+  }
+}
+function doLogout(){ clearSession(); requireLogin(); }
 
 /* ---------- Live Google Sheets sources (published CSV) ---------- */
 const CSV_URLS={
@@ -292,6 +378,7 @@ function rebuildPodSelect(){
 rebuildPodSelect();
 updatePodInfo();renderForm();renderLog();
 loadLiveData(false);
+requireLogin();
 
 function updatePodInfo(){
   const p=PODS.find(x=>x.pod==+sel.value);
@@ -363,6 +450,11 @@ function renderForm(){
 
 /* ---------- Save / log ---------- */
 async function saveEntry(){
+  const session=requireLogin();
+  if(!session){ toast('Please sign in first'); return; }
+  if(currentTab==='override' && !(session.role==='Manager'||session.role==='Founder')){
+    toast('Only Managers/Founders can set overrides'); return;
+  }
   const pod=+sel.value; const p=PODS.find(x=>x.pod===pod);
   const date=document.getElementById('f_date').value||todayStr;
   const notes=(document.getElementById('f_notes')||{}).value||'';
@@ -371,7 +463,7 @@ async function saveEntry(){
     species:val('f_species'),grazedays:val('f_grazedays'),backfence:val('f_backfence'),
     paction:val('f_paction'),exitby:val('f_exitby'),
     override:val('f_override'),status:val('f_status'),
-    token:APPS_SCRIPT_TOKEN||undefined};
+    token:session.token, loggedBy:session.name, role:session.role};
   const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
   log.unshift(entry); localStorage.setItem('ngapori_log',JSON.stringify(log));
   resetForm(); renderLog();
@@ -395,7 +487,10 @@ async function pushToSheet(entry){
       throw new Error('Non-JSON response from Apps Script (likely an authorization/deployment issue): '+text.slice(0,150));
     }
     console.log('Apps Script response:',data); // open DevTools console (F12) to inspect debug.headerRow / debug.error
-    if(!res.ok || data.ok===false) throw new Error(data.error||('HTTP '+res.status));
+    if(!res.ok || data.ok===false){
+      if(data && /unauthorized|forbidden/i.test(data.error||'')){ clearSession(); requireLogin(); }
+      throw new Error(data.error||('HTTP '+res.status));
+    }
     toast('Synced to Google Sheet ✓');
   }catch(err){
     console.error('Push to sheet failed:',err);
@@ -408,13 +503,14 @@ function renderLog(){
   const log=JSON.parse(localStorage.getItem('ngapori_log')||'[]');
   document.getElementById('logCount').textContent=log.length+' entries';
   const body=document.getElementById('logBody');
-  if(!log.length){body.innerHTML='<tr><td colspan="11" class="empty">No entries yet — log your first field measurement above.</td></tr>';return;}
+  if(!log.length){body.innerHTML='<tr><td colspan="12" class="empty">No entries yet — log your first field measurement above.</td></tr>';return;}
   body.innerHTML=log.map(e=>`<tr>
     <td>${esc(e.date)}</td><td><b>${esc(e.pod)}</b></td><td>${esc(e.zone)}</td>
     <td>${esc(actionLabel(e))}</td>
     <td>${esc(e.pre)||'—'}</td><td>${esc(e.post)||'—'}</td><td>${esc(e.dm)||'—'}</td>
     <td>${e.override&&e.override!=='(none)'?esc(e.override):'—'}</td>
     <td>${esc(e.status)||'—'}</td>
+    <td style="color:var(--muted)">${esc(e.loggedBy)||'—'}</td>
     <td style="white-space:normal;max-width:200px;color:var(--muted)">${esc(e.notes)||'—'}</td>
     <td class="log-actions"><a onclick="delEntry(${Number(e.id)})" style="color:var(--red)">✕ del</a></td></tr>`).join('');
 }
